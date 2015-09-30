@@ -1,0 +1,258 @@
+//*******************************************************************************************************
+//
+//Program:      Image Decoder
+//
+//Purpose:      This program can decypher pictures and messages hidden within the blue bytes of an image.
+//              It can also inscribe messages into a picture's blue bytes.
+//Author:       David Hospedales
+//Class:        CMPE 2300
+//Instructor:   Shane Keleman
+//Date:         Sept 28, 2015
+//*******************************************************************************************************
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace CMPE2300David_HospedalesLab01
+{
+    public partial class ImageDecoder : Form
+    {
+        private Bitmap loadedPicture = null;   //A selected picture will be loaded into memory
+        public ImageDecoder()
+        {
+            InitializeComponent();
+        }
+
+        //*******************************************************************************************************
+        //Form1_Load:
+        //Purpose: Used to change the selected item in the combo box to the 'All' option
+        //*******************************************************************************************************
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            ToolStrip_ComboBox.SelectedIndex = 0;
+        }
+
+        //*******************************************************************************************************
+        //ToolStrip_Load_Click:
+        //Purpose: Used to prompt the user with a load file dialog in which a picture is to be selected
+        //*******************************************************************************************************
+        private void ToolStrip_Load_Click(object sender, EventArgs e)
+        {
+            UI_OpenFileDialog.ShowDialog(); //Prompts the user to select a picture
+
+            //If the selected file is not a valid picture format, the loading of the picture will throw an
+            //exception. Our loadedPicture will be null.
+            try
+            {
+                loadedPicture = (Bitmap)Image.FromFile(UI_OpenFileDialog.FileName); //Attempt to load picture...
+                UI_PictureBox.BackgroundImage = loadedPicture; //...If successful, out it in the picture box 
+                UI_PictureBox.BackgroundImageLayout = ImageLayout.Zoom;
+            }
+            catch
+            {
+                loadedPicture = null;
+            }
+        }
+
+
+        //*******************************************************************************************************
+        //ToolStrip_Encode_Click
+        //Purpose: This method takes the text entered into the form's text box and inscribes each character
+        //         ,bit by bit, into a pixel's blue components.
+        //*******************************************************************************************************
+        private void ToolStrip_Encode_Click(object sender, EventArgs e)
+        {
+            //EXIT CONDITIONS
+            //Exits if a picture is not loaded into memory
+            if (loadedPicture == null)
+                return;
+            
+            //Trims the input, then checks that it wasn't empty
+            string messageToEncode = UI_TextBox.Text.Trim();
+            if (messageToEncode.Length == 0)
+                return;
+
+            //VARIABLES
+            byte bitMask = 0x80;  //Used to iterate over a byte's bits
+            int messageIndex = 0; //Used to hold the current index of the encoding message
+            char currentChar = messageToEncode[messageIndex];  //Initialized to the first spot of our message
+            bool endOfStream = false;  //Used as an exit condition to our loop: when all the characters have been implemented
+            
+
+
+            //Iterates over the pixels of a picture starting from top left
+            for (int y = 0; y < loadedPicture.Height; ++y)
+            {
+                for (int x = 0; x < loadedPicture.Width; ++x)
+                {
+                    //Exit condition: after we have put in an End of File character, the loop will exit
+                    if(bitMask == 0 && currentChar == 0xff)
+                    {
+                        endOfStream = true; //Used to exit outer FOR loop
+                        break;
+                    }
+
+
+                    //A color is loaded from the current working pixel, its blue component is either turned on or off
+                    Color c = loadedPicture.GetPixel(x, y);
+                    int blue = (bitMask & currentChar) == 0 ? 254 : 255;
+                    loadedPicture.SetPixel(x, y, Color.FromArgb(c.A, c.R, c.G, blue));   
+
+
+                    //Bit mask is decremented to check the blue pixel component
+                    if ((bitMask >>= 1) == 0 && currentChar != 0xff)
+                    {
+                        //After 8 decrements, the bitmask is reset, and the next character in our message will be accessed
+                        ++messageIndex;
+                        bitMask = 0x80;
+
+                        //This is the end of the message condition:
+                        //once completed, an EOF character will be added to the picture
+                        if (messageIndex >= messageToEncode.Length)
+                            currentChar = (char)0xff;
+                        else
+                            currentChar = messageToEncode[messageIndex];
+                    }
+                }
+                if (endOfStream)
+                    break;
+            }
+        }
+
+
+        //*******************************************************************************************************
+        //ToolStrip_Decode_Click
+        //Purpose: This method extracts an embedded message from the pixels of a picture by taking the LSB of 8 
+        //         consecutive blue pixels, creating characters.
+        //*******************************************************************************************************
+        private void ToolStrip_Decode_Click(object sender, EventArgs e)
+        {
+            //Exit Condition: if no picture is loaded, exit.
+            if (loadedPicture == null)
+                return;
+
+            //VARIABLES
+            List<byte> colorsAsBytes = new List<byte>();  //Used to store a sequence of 8 blue bytes
+            char resultingChar;  //Used to store the result of decyphered blue bytes
+            string encodedMessage = "";  //Used to hold the resulting characters
+            bool eofFound = false; //Used as an exit condition of the following loop
+
+            //Scans through each pixel of a picture, collecting the blue components of 8 adjacent pixels
+            for (int y = 0; y < loadedPicture.Height; ++y)
+            {
+                for (int x = 0; x < loadedPicture.Width; ++x)
+                {
+                    //Each pixel's blue component is added
+                    colorsAsBytes.Add(loadedPicture.GetPixel(x, y).B);
+
+                    //If enough bytes were collected to make a character..
+                    if (colorsAsBytes.Count == 8)
+                    {
+                        //The 8 blue bytes were converted to a character
+                        resultingChar = ByteToChar(colorsAsBytes);
+
+                        //The last character of a message will be an End of File character
+                        //Once found, the loop will exit
+                        if (resultingChar == 0xff)
+                            eofFound = true;
+                        else
+                        {
+                            //Each character is accumulated onto the message string
+                            encodedMessage += (char)(255 - resultingChar);
+                            colorsAsBytes.Clear();
+                        }                    
+                    }
+
+                    if (eofFound)
+                        break;
+                }
+                if (eofFound)
+                    break;
+            }
+
+            //The secret message is finally displayed
+            UI_TextBox.Text = encodedMessage;
+        }
+
+        //*******************************************************************************************************
+        //ToolStrip_DecodeImage_Click
+        //Purpose: This method will reveal pictures hidden within pictures. The value of each red, green, or blue 
+        //         pixel (or all 3), depending on if its integer value is even or odd, will decide whether a new
+        //         pixel will contain that color component  
+        //*******************************************************************************************************
+        private void ToolStrip_DecodeImage_Click(object sender, EventArgs e)
+        {
+            //Returns if a picture was never loaded
+            if (loadedPicture == null)
+                return;
+
+            //Empty picture in which the resulting LSB qualifiers will be set
+            Bitmap emptyPic = new Bitmap(loadedPicture.Width, loadedPicture.Height);
+            int chosenColor = ToolStrip_ComboBox.SelectedIndex;
+
+            //This switch chooses a starting and ending point for the color analyzer
+            //as well as the starting point for the mask that turns a color on
+            uint startPoint = 0x10000, endPoint = 0x1, colorStart = 0xff0000;
+            switch (chosenColor)
+            {
+                case 1: //Red
+                    endPoint = startPoint;
+                    break;
+                case 2: //Green
+                    startPoint = endPoint = 0x100;
+                    colorStart >>= 8;
+                    break;
+                case 3: //Blue
+                    startPoint = 0x1;
+                    colorStart >>= 16;
+                    break;
+            }
+
+            //Scans each pixel in a bitmap
+            for (int y = 0; y < loadedPicture.Height; ++y)
+                for (int x = 0; x < loadedPicture.Width; ++x)
+                {
+                    Color c = loadedPicture.GetPixel(x, y); //Gets pixel color
+                    uint colorAsInt = 0xff000000; //Pixel being used in empty picture (black)
+                    uint turnOnColor = colorStart; //mask to turn a color on, now at appropriate starting point
+
+                    //Only loops multiple times when 'All' colors is selected
+                    for (uint i = startPoint; i >= endPoint; i >>= 8, turnOnColor >>= 8)
+                    {
+                        //If a pixel's LSB is on (of chosen color), the empty pixel is masked to turn on that color
+                        colorAsInt = (c.ToArgb() & i) == 0 ? colorAsInt : colorAsInt | turnOnColor;
+                    }
+                    emptyPic.SetPixel(x, y, Color.FromArgb((int)colorAsInt));
+                }
+
+            UI_PictureBox.BackgroundImage = emptyPic;
+        }
+        //*******************************************************************************************************
+        //ByteToChar
+        //Purpose: This method takes a list of colors, and returns a byte constructed from the LSBs of each
+        //         integer color value. 
+        //*******************************************************************************************************
+        private char ByteToChar(List<byte> colors)
+        {
+            byte resultingByte = 0x00;
+            
+            for (int i = 0; i < colors.Count; ++i)
+            {
+                //Extracts the LSB of each color
+                if ((colors[i] & 0x01) == 0)
+                    resultingByte |= 1;
+                //Places the bit in the appropriate spot in the Byte
+                if (i < 7)
+                    resultingByte <<= 1;
+            }
+
+            return (char)resultingByte;
+        }
+    }
+}
